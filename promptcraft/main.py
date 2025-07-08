@@ -240,14 +240,15 @@ def handle_task(prompt_data: PromptData):
     """Handle task specification."""
     typer.echo("\n📋 Specify the Task")
     typer.echo("Describe what you want the AI to accomplish.")
-    
+
     current_value = prompt_data.task or ""
     task = inquirer.text(
         message="Enter task description:",
         default=current_value
     ).execute()
-    
+
     prompt_data.task = task
+    
     typer.echo(f"✅ Task updated: {task[:50]}{'...' if len(task) > 50 else ''}")
 
 
@@ -436,33 +437,84 @@ def handle_generate_and_copy(prompt_data: PromptData):
 
 
 
+def get_menu_options(prompt_data: PromptData):
+    """Generate menu options with completion indicators."""
+    base_options = [
+        ("👤 Define Persona", "persona"),
+        ("📋 Specify the Task", "task"),
+        ("🔍 Provide Context", "context"),
+        ("📐 Define Schemas", "schemas"),
+        ("💡 Add Examples", "examples"),
+        ("⚠️  Set Constraints", "constraints"),
+        ("💾 Save Session As...", None),
+        ("✨ Generate and Copy Prompt ✨", None),
+        ("🚪 Exit", None),
+    ]
+    
+    menu_options = []
+    for option, field in base_options:
+        if field is None:
+            menu_options.append(option)
+        else:
+            # Check if the field has content
+            if field == "schemas":
+                completed = bool(prompt_data.schemas)
+            elif field == "examples":
+                completed = bool(prompt_data.examples)
+            else:
+                completed = bool(getattr(prompt_data, field))
+            
+            if completed:
+                menu_options.append(f"✅ {option[2:]}")
+            else:
+                menu_options.append(option)
+    
+    return menu_options, base_options
+
+def get_next_step_index(current_choice, base_options):
+    """Get the index of the next step after current choice."""
+    # Find current step index
+    current_index = -1
+    for i, (option, field) in enumerate(base_options):
+        if field is None:
+            continue
+        if current_choice.endswith(option[2:]) or current_choice == option:
+            current_index = i
+            break
+    
+    # Find next step that's not completed or is a core step
+    for i in range(current_index + 1, len(base_options)):
+        option, field = base_options[i]
+        if field is not None and i < 6:  # Only advance through core steps (not Save/Generate/Exit)
+            return i
+    
+    return current_index  # Stay on current if no next step
+
 def interactive_menu_with_data(prompt_data: PromptData = None):
     """Run the main interactive menu for building prompts."""
     if prompt_data is None:
         prompt_data = PromptData()
+    
+    current_step_index = 0
+    first_run = True
 
     while True:
-        typer.echo("\n🚀 Welcome to PromptCraft!")
-        typer.echo("Build your prompt by selecting from the options below:\n")
+        # Only show welcome message on first run
+        if first_run:
+            typer.echo("\n🚀 Welcome to PromptCraft!")
+            typer.echo("Build your prompt by selecting from the options below:\n")
+            first_run = False
+        else:
+            typer.echo("\n")
 
-        # Define the clear, descriptive menu options
-        menu_options = [
-            "👤 Define Persona",
-            "📋 Specify the Task",
-            "🔍 Provide Context",
-            "📐 Define Schemas",
-            "💡 Add Examples",
-            "⚠️  Set Constraints",
-            "💾 Save Session As...",
-            "✨ Generate and Copy Prompt ✨",
-            "🚪 Exit",
-        ]
+        menu_options, base_options = get_menu_options(prompt_data)
+        current_default = menu_options[current_step_index]
 
         # Get user's choice
-        choice = inquirer.fuzzy(
+        choice = inquirer.select(
             message="Select an option:",
             choices=menu_options,
-            default=menu_options[0],
+            default=current_default,
         ).execute()
 
         # If user cancels (e.g., Ctrl+C), choice can be None
@@ -474,22 +526,31 @@ def interactive_menu_with_data(prompt_data: PromptData = None):
         if choice == "🚪 Exit":
             typer.echo("👋 Goodbye!")
             break
-        elif choice == "👤 Define Persona":
+        elif choice.endswith("Define Persona") or choice == "👤 Define Persona":
             handle_persona(prompt_data)
-        elif choice == "📋 Specify the Task":
+            current_step_index = get_next_step_index(choice, base_options)
+        elif choice.endswith("Specify the Task") or choice == "📋 Specify the Task":
             handle_task(prompt_data)
-        elif choice == "🔍 Provide Context":
+            current_step_index = get_next_step_index(choice, base_options)
+        elif choice.endswith("Provide Context") or choice == "🔍 Provide Context":
             handle_context(prompt_data)
-        elif choice == "📐 Define Schemas":
+            current_step_index = get_next_step_index(choice, base_options)
+        elif choice.endswith("Define Schemas") or choice == "📐 Define Schemas":
             handle_schemas(prompt_data)
-        elif choice == "💡 Add Examples":
+            current_step_index = get_next_step_index(choice, base_options)
+        elif choice.endswith("Add Examples") or choice == "💡 Add Examples":
             handle_examples(prompt_data)
-        elif choice == "⚠️  Set Constraints":
+            current_step_index = get_next_step_index(choice, base_options)
+        elif choice.endswith("Set Constraints") or choice == "⚠️  Set Constraints":
             handle_constraints(prompt_data)
-        elif choice == "💾 Save Session As...":
+            current_step_index = get_next_step_index(choice, base_options)
+        elif choice.endswith("Save Session As...") or choice == "💾 Save Session As...":
             handle_save_session(prompt_data)
-        elif choice == "✨ Generate and Copy Prompt ✨":
+            # Stay on current step for save
+        elif choice.endswith("Generate and Copy Prompt ✨") or choice == "✨ Generate and Copy Prompt ✨":
             handle_generate_and_copy(prompt_data)
+            typer.echo("👋 Goodbye!")
+            break
         else:
             # This case should ideally not be reached with fuzzy matching
             typer.echo(f"Unknown option: {choice}")
