@@ -3,8 +3,10 @@ import yaml
 import pyperclip
 import json
 import os
+import glob
+import re
 from InquirerPy import inquirer
-from typing import Dict, Any
+from typing import Dict, Any, List
 from .models import PromptData
 from openai import OpenAI
 from rich.console import Console
@@ -252,18 +254,193 @@ def handle_task(prompt_data: PromptData):
     typer.echo(f"✅ Task updated: {task[:50]}{'...' if len(task) > 50 else ''}")
 
 
+def get_path_suggestions(partial_path: str = "") -> List[str]:
+    """Get file/directory suggestions for autocomplete based on partial path."""
+    try:
+        if not partial_path:
+            # Show current directory contents
+            current_dir = "."
+            suggestions = []
+        else:
+            # Expand user path (~) 
+            expanded_path = os.path.expanduser(partial_path)
+            
+            # If path ends with separator, list contents of that directory
+            if expanded_path.endswith('/') or expanded_path.endswith('\\'):
+                current_dir = expanded_path
+                suggestions = []
+            else:
+                # Get directory part and filename part
+                current_dir = os.path.dirname(expanded_path) or "."
+                filename_part = os.path.basename(expanded_path)
+                suggestions = []
+        
+        # Get all files and directories in current directory
+        try:
+            if os.path.exists(current_dir):
+                items = os.listdir(current_dir)
+                for item in items:
+                    if item.startswith('.'):
+                        continue
+                    
+                    item_path = os.path.join(current_dir, item)
+                    if os.path.isdir(item_path):
+                        suggestions.append(f"{item}/")
+                    else:
+                        suggestions.append(item)
+        except Exception:
+            pass
+        
+        # Filter suggestions based on partial input
+        if partial_path and not (partial_path.endswith('/') or partial_path.endswith('\\')):
+            filename_part = os.path.basename(partial_path)
+            if filename_part:
+                filtered = [s for s in suggestions if s.lower().startswith(filename_part.lower())]
+                suggestions = filtered
+        
+        return sorted(suggestions)[:20]
+    except Exception:
+        return []
+
+def parse_file_references(text: str) -> List[str]:
+    """Parse @ file references from text."""
+    # Find all @file_path patterns
+    pattern = r'@([^\s]+)'
+    matches = re.findall(pattern, text)
+    return matches
+
+def read_file_content(file_path: str) -> str:
+    """Read and return file content with error handling."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            return f"\n## File: {file_path}\n\n```\n{content}\n```\n"
+    except Exception as e:
+        return f"\n## File: {file_path}\n\n*Error reading file: {str(e)}*\n"
+
+def process_context_with_files(context_text: str) -> str:
+    """Process context text and expand file references."""
+    file_refs = parse_file_references(context_text)
+    
+    if not file_refs:
+        return context_text
+    
+    # Start with the original context
+    processed_context = context_text
+    
+    # Add file contents
+    for file_path in file_refs:
+        file_content = read_file_content(file_path)
+        processed_context += file_content
+    
+    return processed_context
+
 def handle_context(prompt_data: PromptData):
-    """Handle context provision."""
+    """Handle context provision with file reference support."""
     typer.echo("\n🔍 Provide Context")
     typer.echo("Provide background information, technical details, or relevant context.")
+    typer.echo("💡 Tip: Use @filename to include file contents (e.g., @src/main.py)")
     
     current_value = prompt_data.context or ""
-    context = inquirer.text(
-        message="Enter context information:",
-        default=current_value
+    
+    # Ask if user wants to add a file
+    add_file = inquirer.confirm(
+        message="Would you like to add a file to context?",
+        default=False
     ).execute()
     
-    prompt_data.context = context
+    if add_file:
+        def get_directory_contents(path):
+            """Get files and directories in a given path."""
+            try:
+                expanded_path = os.path.expanduser(path)
+                if not os.path.exists(expanded_path) or not os.path.isdir(expanded_path):
+                    return []
+                
+                contents = []
+                items = os.listdir(expanded_path)
+                
+                for item in items:
+                    if item.startswith('.'):
+                        continue
+                    
+                    item_path = os.path.join(expanded_path, item)
+                    if os.path.isdir(item_path):
+                        contents.append(f"{os.path.join(path, item)}/")
+                    else:
+                        contents.append(os.path.join(path, item))
+                
+                return sorted(contents)
+            except Exception:
+                return []
+        
+        # Start with current directory and common paths
+        current_path = "."
+        while True:
+            # Get contents of current path
+            all_files = get_directory_contents(current_path)
+            
+            # Add navigation options
+            nav_options = []
+            if current_path != ".":
+                nav_options.append("⬆️  Go back")
+            nav_options.extend([
+                "📁 Current directory (.)",
+                "🏠 Home directory (~)",
+                "📂 Enter custom path"
+            ])
+            
+            # Combine navigation and files
+            choices = nav_options + all_files
+            
+            if not choices:
+                typer.echo("No files found in directory.")
+                break
+            
+            selected = inquirer.fuzzy(
+                message=f"Select file from {current_path} (type to search):",
+                choices=choices,
+                validate=lambda x: True
+            ).execute()
+            
+            if not selected:
+                break
+            elif selected == "⬆️  Go back":
+                current_path = os.path.dirname(current_path) if current_path != "." else "."
+            elif selected == "📁 Current directory (.)":
+                current_path = "."
+            elif selected == "🏠 Home directory (~)":
+                current_path = "~"
+            elif selected == "📂 Enter custom path":
+                custom_path = inquirer.text(
+                    message="Enter directory path:",
+                    default=current_path
+                ).execute()
+                if custom_path:
+                    current_path = custom_path
+            elif selected.endswith('/'):
+                # It's a directory, navigate into it
+                current_path = selected
+            else:
+                # It's a file, select it
+                current_value = f"{current_value}\n\n@{selected}" if current_value else f"@{selected}"
+                break
+    
+    context = inquirer.text(
+        message="Enter context information:",
+        default=current_value,
+        multiline=True
+    ).execute()
+    
+    # Process the context to expand file references
+    processed_context = process_context_with_files(context)
+    prompt_data.context = processed_context
+    
+    # Show preview of what was added
+    file_refs = parse_file_references(context)
+    if file_refs:
+        typer.echo(f"📁 Added files: {', '.join(file_refs)}")
+    
     typer.echo(f"✅ Context updated: {context[:50]}{'...' if len(context) > 50 else ''}")
 
 
