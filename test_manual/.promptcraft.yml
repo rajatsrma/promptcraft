@@ -1,0 +1,3 @@
+database: PostgreSQL
+framework: FastAPI
+style_guide: PEP 8

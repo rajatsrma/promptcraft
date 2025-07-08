@@ -1,0 +1,6 @@
+database: PostgreSQL
+framework: FastAPI
+llm:
+  model: gpt-4o-mini
+  provider: OpenAI
+style_guide: PEP 8

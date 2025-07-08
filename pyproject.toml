@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "promptcraft"
+version = "0.1.0"
+description = "A CLI for crafting high-quality LLM prompts."
+authors = ["Your Team Name"]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+typer = {extras = ["all"], version = "^0.16.0"}
+inquirerpy = "^0.3.4"
+pyyaml = "^6.0.2"
+pyperclip = "^1.9.0"
+openai = "^1.93.1"
+rich = "^14.0.0"
+
+[tool.poetry.scripts]
+promptcraft = "promptcraft.main:app"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.4.1"
+black = "^25.1.0"
+pytest-mock = "^3.14.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
