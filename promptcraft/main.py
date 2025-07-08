@@ -432,6 +432,14 @@ def handle_generate_and_copy(prompt_data: PromptData):
         typer.echo("-" * 50)
 
 
+def handle_exit(prompt_data: PromptData):
+    """Handle exiting the application."""
+    # This function is a placeholder to fit the new dynamic dispatch structure.
+    # The actual exit logic is handled in the main loop.
+    pass
+
+
+
 def interactive_menu_with_data(prompt_data: PromptData = None):
     """Run the main interactive menu for building prompts."""
     if prompt_data is None:
@@ -443,44 +451,42 @@ def interactive_menu_with_data(prompt_data: PromptData = None):
         
         # Create menu options
         menu_options = [
-            "👤 Define Persona",
-            "📋 Specify the Task", 
-            "🔍 Provide Context",
-            "📐 Define Schemas",
-            "💡 Add Examples",
-            "⚠️  Set Constraints",
-            "💾 Save Session As...",
-            "✨ Generate and Copy Prompt ✨",
-            "🚪 Exit"
+            ("👤 Define Persona", "handle_persona"),
+            ("📋 Specify the Task", "handle_task"),
+            ("🔍 Provide Context", "handle_context"),
+            ("📐 Define Schemas", "handle_schemas"),
+            ("💡 Add Examples", "handle_examples"),
+            ("⚠️  Set Constraints", "handle_constraints"),
+            ("💾 Save Session As...", "handle_save_session"),
+            ("✨ Generate and Copy Prompt ✨", "handle_generate_and_copy"),
+            ("🚪 Exit", "handle_exit")
         ]
+
+        # Get display names for the fuzzy search
+        display_options = [option[0] for option in menu_options]
         
-        choice = inquirer.fuzzy(
+        choice_name = inquirer.fuzzy(
             message="Select an option:",
-            choices=menu_options,
-            default=menu_options[0]
+            choices=display_options,
+            default=display_options[0]
         ).execute()
+
+        # Find the corresponding action
+        action = ""
+        for name, func_name in menu_options:
+            if name == choice_name:
+                action = func_name
+                break
         
-        if choice == "🚪 Exit":
+        if action == "handle_exit":
             typer.echo("👋 Goodbye!")
             break
-        elif choice == "👤 Define Persona":
-            handle_persona(prompt_data)
-        elif choice == "📋 Specify the Task":
-            handle_task(prompt_data)
-        elif choice == "🔍 Provide Context":
-            handle_context(prompt_data)
-        elif choice == "📐 Define Schemas":
-            handle_schemas(prompt_data)
-        elif choice == "💡 Add Examples":
-            handle_examples(prompt_data)
-        elif choice == "⚠️  Set Constraints":
-            handle_constraints(prompt_data)
-        elif choice == "💾 Save Session As...":
-            handle_save_session(prompt_data)
-        elif choice == "✨ Generate and Copy Prompt ✨":
-            handle_generate_and_copy(prompt_data)
+        elif action:
+            # Dynamically call the handler function
+            handler_func = globals()[action]
+            handler_func(prompt_data)
         else:
-            typer.echo(f"Unknown option: {choice}")
+            typer.echo(f"Unknown option: {choice_name}")
 
 
 def interactive_menu():
