@@ -311,12 +311,186 @@ def parse_file_references(text: str) -> List[str]:
     matches = re.findall(pattern, text)
     return matches
 
-def read_file_content(file_path: str) -> str:
-    """Read and return file content with error handling."""
+def get_file_type(file_path: str) -> str:
+    """Determine file type based on extension."""
+    extension = os.path.splitext(file_path)[1].lower()
+    
+    if extension in ['.py']:
+        return 'python'
+    elif extension in ['.js', '.jsx', '.ts', '.tsx']:
+        return 'javascript'
+    elif extension in ['.java']:
+        return 'java'
+    elif extension in ['.go']:
+        return 'go'
+    elif extension in ['.rs']:
+        return 'rust'
+    elif extension in ['.c', '.cpp', '.cc', '.cxx', '.h', '.hpp']:
+        return 'cpp'
+    elif extension in ['.rb']:
+        return 'ruby'
+    elif extension in ['.php']:
+        return 'php'
+    else:
+        return 'unknown'
+
+
+def extract_python_context(file_path: str) -> str:
+    """Extract Python-specific context like imports, classes, and functions."""
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
-            return f"\n## File: {file_path}\n\n```\n{content}\n```\n"
+        
+        context_info = []
+        
+        # Extract imports
+        imports = []
+        for line in content.split('\n'):
+            line = line.strip()
+            if line.startswith('import ') or line.startswith('from '):
+                imports.append(line)
+        
+        if imports:
+            context_info.append("**Imports:**")
+            for imp in imports[:10]:  # Limit to first 10 imports
+                context_info.append(f"- {imp}")
+        
+        # Extract class and function definitions
+        definitions = []
+        for line in content.split('\n'):
+            line = line.strip()
+            if line.startswith('class ') or line.startswith('def '):
+                definitions.append(line)
+        
+        if definitions:
+            context_info.append("\n**Definitions:**")
+            for defn in definitions[:15]:  # Limit to first 15 definitions
+                context_info.append(f"- {defn}")
+        
+        # Check for common Python patterns
+        patterns = []
+        if 'if __name__ == "__main__"' in content:
+            patterns.append("- Has main execution block")
+        if 'class ' in content and 'def __init__' in content:
+            patterns.append("- Contains class definitions with constructors")
+        if 'async def' in content or 'await ' in content:
+            patterns.append("- Uses async/await patterns")
+        if 'pytest' in content or 'unittest' in content:
+            patterns.append("- Contains test code")
+        
+        if patterns:
+            context_info.append("\n**Code Patterns:**")
+            context_info.extend(patterns)
+        
+        return "\n".join(context_info)
+    
+    except Exception as e:
+        return f"Error extracting Python context: {str(e)}"
+
+
+def extract_javascript_context(file_path: str) -> str:
+    """Extract JavaScript/TypeScript-specific context."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        context_info = []
+        
+        # Extract imports/requires
+        imports = []
+        for line in content.split('\n'):
+            line = line.strip()
+            if (line.startswith('import ') or line.startswith('const ') and 'require(' in line or 
+                line.startswith('import {') or line.startswith('export ')):
+                imports.append(line)
+        
+        if imports:
+            context_info.append("**Imports/Exports:**")
+            for imp in imports[:10]:  # Limit to first 10 imports
+                context_info.append(f"- {imp}")
+        
+        # Extract function definitions
+        functions = []
+        for line in content.split('\n'):
+            line = line.strip()
+            if (line.startswith('function ') or line.startswith('const ') and '=>' in line or
+                line.startswith('export function') or 'function(' in line):
+                functions.append(line)
+        
+        if functions:
+            context_info.append("\n**Functions:**")
+            for func in functions[:10]:  # Limit to first 10 functions
+                context_info.append(f"- {func}")
+        
+        # Check for common patterns
+        patterns = []
+        if 'React' in content or 'jsx' in file_path.lower():
+            patterns.append("- React component")
+        if 'useState' in content or 'useEffect' in content:
+            patterns.append("- Uses React hooks")
+        if 'async' in content and 'await' in content:
+            patterns.append("- Uses async/await")
+        if 'express' in content or 'app.get' in content:
+            patterns.append("- Express.js server code")
+        if 'describe(' in content or 'it(' in content or 'test(' in content:
+            patterns.append("- Contains test code")
+        
+        if patterns:
+            context_info.append("\n**Code Patterns:**")
+            context_info.extend(patterns)
+        
+        # Check for package.json in same directory or parent
+        package_json_path = None
+        current_dir = os.path.dirname(file_path)
+        for _ in range(3):  # Check up to 3 parent directories
+            potential_package = os.path.join(current_dir, 'package.json')
+            if os.path.exists(potential_package):
+                package_json_path = potential_package
+                break
+            current_dir = os.path.dirname(current_dir)
+        
+        if package_json_path:
+            try:
+                with open(package_json_path, 'r') as f:
+                    package_data = json.load(f)
+                    deps = list(package_data.get('dependencies', {}).keys())
+                    if deps:
+                        context_info.append(f"\n**Dependencies (from {package_json_path}):**")
+                        for dep in deps[:8]:  # Limit to first 8 dependencies
+                            context_info.append(f"- {dep}")
+            except:
+                pass
+        
+        return "\n".join(context_info)
+    
+    except Exception as e:
+        return f"Error extracting JavaScript context: {str(e)}"
+
+
+def read_file_content(file_path: str) -> str:
+    """Read and return file content with error handling and smart context."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Get file type and extract relevant context
+        file_type = get_file_type(file_path)
+        context_info = ""
+        
+        if file_type == 'python':
+            context_info = extract_python_context(file_path)
+        elif file_type == 'javascript':
+            context_info = extract_javascript_context(file_path)
+        
+        # Build the formatted output
+        result = f"\n## File: {file_path}\n"
+        
+        if context_info:
+            result += f"\n**Context Information:**\n{context_info}\n"
+        
+        result += f"\n**File Content:**\n```\n{content}\n```\n"
+        
+        return result
     except Exception as e:
         return f"\n## File: {file_path}\n\n*Error reading file: {str(e)}*\n"
 
@@ -833,6 +1007,175 @@ def use_template(name: str):
     
     # Start interactive menu with loaded template data
     interactive_menu_with_data(prompt_data)
+
+
+@app.command("quick")
+def quick(
+    template: str = typer.Option("code-review", help="Template to use"),
+    file: str = typer.Option(None, help="File to include in context"),
+    output: bool = typer.Option(False, help="Output to stdout instead of clipboard")
+):
+    """Quick prompt generation."""
+    # Load the specified template
+    template_obj = template_manager.load_template(template)
+    
+    if not template_obj:
+        typer.echo(f"❌ Template '{template}' not found.")
+        typer.echo("💡 Use 'promptcraft template list' to see available templates.")
+        return
+    
+    # Convert template to PromptData
+    prompt_data = template_obj.to_prompt_data()
+    
+    # Include file content if specified
+    if file:
+        if not os.path.exists(file):
+            typer.echo(f"❌ File '{file}' not found.")
+            return
+        
+        try:
+            # Read file content and add to context
+            file_content = read_file_content(file)
+            if prompt_data.context:
+                prompt_data.context += f"\n\n{file_content}"
+            else:
+                prompt_data.context = file_content
+        except Exception as e:
+            typer.echo(f"❌ Error reading file '{file}': {e}")
+            return
+    
+    # Generate the prompt string
+    prompt_string = generate_prompt_string(prompt_data)
+    
+    if not prompt_string:
+        typer.echo("❌ Failed to generate prompt.")
+        return
+    
+    # Output to stdout or clipboard based on option
+    if output:
+        typer.echo("📋 Generated Prompt:")
+        typer.echo("-" * 50)
+        typer.echo(prompt_string)
+        typer.echo("-" * 50)
+    else:
+        try:
+            pyperclip.copy(prompt_string)
+            typer.echo("✅ Prompt copied to clipboard!")
+            typer.echo(f"📋 Used template: {template}")
+            if file:
+                typer.echo(f"📁 Included file: {file}")
+        except Exception as e:
+            typer.echo(f"❌ Error copying to clipboard: {e}")
+            typer.echo("📋 Generated Prompt:")
+            typer.echo("-" * 50)
+            typer.echo(prompt_string)
+            typer.echo("-" * 50)
+
+
+@app.command("review")
+def review_file(file_path: str):
+    """Quick code review of a file."""
+    quick(template="code-review", file=file_path, output=False)
+
+
+@app.command("debug")
+def debug_issue(error_message: str):
+    """Generate debugging prompt for an error message."""
+    # Create a temporary file with the error message
+    import tempfile
+    
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
+        temp_file.write(f"Error Message:\n{error_message}")
+        temp_file_path = temp_file.name
+    
+    try:
+        # Load debugging template
+        template_obj = template_manager.load_template("debugging")
+        if not template_obj:
+            typer.echo("❌ Debugging template not found.")
+            return
+        
+        # Convert template to PromptData and add error message to context
+        prompt_data = template_obj.to_prompt_data()
+        error_context = f"Error Message: {error_message}\n\nPlease analyze this error and provide debugging steps."
+        
+        if prompt_data.context:
+            prompt_data.context += f"\n\n{error_context}"
+        else:
+            prompt_data.context = error_context
+        
+        # Generate and copy prompt
+        prompt_string = generate_prompt_string(prompt_data)
+        
+        try:
+            pyperclip.copy(prompt_string)
+            typer.echo("✅ Debugging prompt copied to clipboard!")
+            typer.echo(f"🐛 Error: {error_message[:50]}{'...' if len(error_message) > 50 else ''}")
+        except Exception as e:
+            typer.echo(f"❌ Error copying to clipboard: {e}")
+            typer.echo("📋 Generated Prompt:")
+            typer.echo("-" * 50)
+            typer.echo(prompt_string)
+            typer.echo("-" * 50)
+    
+    finally:
+        # Clean up temporary file
+        import os
+        try:
+            os.unlink(temp_file_path)
+        except:
+            pass
+
+
+@app.command("explain")
+def explain_file(file_path: str):
+    """Generate explanation prompt for a file."""
+    # Create a custom template for code explanation
+    template_obj = template_manager.load_template("code-review")
+    if not template_obj:
+        typer.echo("❌ Code review template not found.")
+        return
+    
+    # Convert template to PromptData and modify for explanation
+    prompt_data = template_obj.to_prompt_data()
+    prompt_data.persona = "You are an expert code educator who excels at explaining complex code in simple, understandable terms."
+    prompt_data.task = "Explain the provided code in detail. Break down its functionality, purpose, and how it works step by step."
+    prompt_data.constraints = "Provide clear explanations suitable for someone learning the codebase. Include purpose, key functions, data flow, and any important patterns or concepts."
+    
+    # Include file content if it exists
+    if not os.path.exists(file_path):
+        typer.echo(f"❌ File '{file_path}' not found.")
+        return
+    
+    try:
+        file_content = read_file_content(file_path)
+        if prompt_data.context:
+            prompt_data.context += f"\n\n{file_content}"
+        else:
+            prompt_data.context = file_content
+    except Exception as e:
+        typer.echo(f"❌ Error reading file '{file_path}': {e}")
+        return
+    
+    # Generate and copy prompt
+    prompt_string = generate_prompt_string(prompt_data)
+    
+    try:
+        pyperclip.copy(prompt_string)
+        typer.echo("✅ Code explanation prompt copied to clipboard!")
+        typer.echo(f"📄 File: {file_path}")
+    except Exception as e:
+        typer.echo(f"❌ Error copying to clipboard: {e}")
+        typer.echo("📋 Generated Prompt:")
+        typer.echo("-" * 50)
+        typer.echo(prompt_string)
+        typer.echo("-" * 50)
+
+
+@app.command("test")
+def test_file(file_path: str):
+    """Generate test case prompt for a file."""
+    quick(template="testing", file=file_path, output=False)
 
 
 @app.callback(invoke_without_command=True)
