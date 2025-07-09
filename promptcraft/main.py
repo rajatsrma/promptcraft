@@ -9,6 +9,7 @@ from InquirerPy import inquirer
 from typing import Dict, Any, List
 from .models import PromptData, Template
 from . import template_manager
+from . import project_detector
 from openai import OpenAI
 from rich.console import Console
 from rich.syntax import Syntax
@@ -680,7 +681,25 @@ def interactive_menu_with_data(prompt_data: PromptData = None):
         # Only show welcome message on first run
         if first_run:
             typer.echo("\n🚀 Welcome to PromptCraft!")
-            typer.echo("Build your prompt by selecting from the options below:\n")
+            
+            # Detect project type and suggest templates
+            try:
+                project_description = project_detector.get_project_description()
+                suggested_templates = project_detector.get_suggested_templates()
+                
+                if project_description != "Unknown project type":
+                    typer.echo(f"🔍 Detected: {project_description}")
+                    
+                if suggested_templates:
+                    templates_str = ", ".join(suggested_templates)
+                    typer.echo(f"💡 Suggested templates: {templates_str}")
+                    typer.echo("   Use 'promptcraft template use <name>' to load a template")
+                    
+            except Exception:
+                # Silently fail if project detection has issues
+                pass
+            
+            typer.echo("\nBuild your prompt by selecting from the options below:\n")
             first_run = False
         else:
             typer.echo("\n")
