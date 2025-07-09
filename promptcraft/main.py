@@ -7,7 +7,9 @@ import glob
 import re
 from InquirerPy import inquirer
 from typing import Dict, Any, List
-from .models import PromptData
+from .models import PromptData, Template
+from . import template_manager
+from . import project_detector
 from openai import OpenAI
 from rich.console import Console
 from rich.syntax import Syntax
@@ -679,7 +681,25 @@ def interactive_menu_with_data(prompt_data: PromptData = None):
         # Only show welcome message on first run
         if first_run:
             typer.echo("\n🚀 Welcome to PromptCraft!")
-            typer.echo("Build your prompt by selecting from the options below:\n")
+            
+            # Detect project type and suggest templates
+            try:
+                project_description = project_detector.get_project_description()
+                suggested_templates = project_detector.get_suggested_templates()
+                
+                if project_description != "Unknown project type":
+                    typer.echo(f"🔍 Detected: {project_description}")
+                    
+                if suggested_templates:
+                    templates_str = ", ".join(suggested_templates)
+                    typer.echo(f"💡 Suggested templates: {templates_str}")
+                    typer.echo("   Use 'promptcraft template use <name>' to load a template")
+                    
+            except Exception:
+                # Silently fail if project detection has issues
+                pass
+            
+            typer.echo("\nBuild your prompt by selecting from the options below:\n")
             first_run = False
         else:
             typer.echo("\n")
@@ -737,6 +757,82 @@ def interactive_menu_with_data(prompt_data: PromptData = None):
 def interactive_menu():
     """Run the main interactive menu for building prompts."""
     interactive_menu_with_data()
+
+
+# Template management commands
+template_app = typer.Typer(help="Template management commands")
+app.add_typer(template_app, name="template")
+
+
+@template_app.command("list")
+def list_templates():
+    """List all available templates."""
+    templates = template_manager.load_templates()
+    
+    if not templates:
+        typer.echo("📁 No templates found.")
+        return
+    
+    typer.echo("📋 Available Templates:")
+    for template in templates:
+        tags_str = ", ".join(template.tags) if template.tags else "no tags"
+        typer.echo(f"  • {template.name}: {template.description}")
+        typer.echo(f"    Tags: {tags_str}")
+        typer.echo()
+
+
+@template_app.command("show")
+def show_template(name: str):
+    """Show detailed information about a template."""
+    template = template_manager.load_template(name)
+    
+    if not template:
+        typer.echo(f"❌ Template '{name}' not found.")
+        typer.echo("💡 Use 'promptcraft template list' to see available templates.")
+        return
+    
+    console = Console()
+    
+    # Display template details with Rich formatting
+    console.print(f"\n📋 Template: {template.name}", style="bold blue")
+    console.print(f"Description: {template.description}")
+    console.print(f"Tags: {', '.join(template.tags) if template.tags else 'None'}")
+    
+    if template.persona:
+        console.print(f"\n👤 Persona:")
+        console.print(Panel(template.persona, style="cyan"))
+    
+    if template.task:
+        console.print(f"\n📋 Task:")
+        console.print(Panel(template.task, style="green"))
+    
+    if template.context:
+        console.print(f"\n🔍 Context:")
+        console.print(Panel(template.context, style="yellow"))
+    
+    if template.constraints:
+        console.print(f"\n⚠️  Constraints:")
+        console.print(Panel(template.constraints, style="red"))
+
+
+@template_app.command("use")
+def use_template(name: str):
+    """Load a template and start the interactive menu."""
+    template = template_manager.load_template(name)
+    
+    if not template:
+        typer.echo(f"❌ Template '{name}' not found.")
+        typer.echo("💡 Use 'promptcraft template list' to see available templates.")
+        return
+    
+    # Convert template to PromptData
+    prompt_data = template.to_prompt_data()
+    
+    typer.echo(f"✅ Loaded template '{name}'")
+    typer.echo(f"📝 {template.description}")
+    
+    # Start interactive menu with loaded template data
+    interactive_menu_with_data(prompt_data)
 
 
 @app.callback(invoke_without_command=True)
