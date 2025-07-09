@@ -5,11 +5,13 @@ import json
 import os
 import glob
 import re
+import subprocess
 from InquirerPy import inquirer
 from typing import Dict, Any, List
 from .models import PromptData, Template
 from . import template_manager
 from . import project_detector
+from . import git_utils
 from openai import OpenAI
 from rich.console import Console
 from rich.syntax import Syntax
@@ -519,6 +521,14 @@ def handle_context(prompt_data: PromptData):
     
     current_value = prompt_data.context or ""
     
+    # Ask if user wants to include git context
+    include_git = False
+    if git_utils.is_git_repo():
+        include_git = inquirer.confirm(
+            message="Would you like to include git context (branch, status, recent commits)?",
+            default=False
+        ).execute()
+    
     # Ask if user wants to add a file
     add_file = inquirer.confirm(
         message="Would you like to add a file to context?",
@@ -608,6 +618,33 @@ def handle_context(prompt_data: PromptData):
         multiline=True
     ).execute()
     
+    # Add git context if requested
+    if include_git:
+        git_context_parts = []
+        
+        current_branch = git_utils.get_current_branch()
+        if current_branch:
+            git_context_parts.append(f"**Git Branch:** {current_branch}")
+        
+        status = git_utils.get_git_status()
+        if any(status.values()):
+            git_context_parts.append("**Git Status:**")
+            for status_type, files in status.items():
+                if files:
+                    git_context_parts.append(f"- {status_type.title()}: {', '.join(files[:3])}")
+                    if len(files) > 3:
+                        git_context_parts.append(f"  ... and {len(files) - 3} more files")
+        
+        recent_commits = git_utils.get_recent_commits(3)
+        if recent_commits:
+            git_context_parts.append("**Recent Commits:**")
+            for commit in recent_commits:
+                git_context_parts.append(f"- {commit['hash']}: {commit['message']} ({commit['author']})")
+        
+        if git_context_parts:
+            git_context = "\n".join(git_context_parts)
+            context = f"{context}\n\n## Git Context\n\n{git_context}" if context else f"## Git Context\n\n{git_context}"
+    
     # Process the context to expand file references
     processed_context = process_context_with_files(context)
     prompt_data.context = processed_context
@@ -616,6 +653,9 @@ def handle_context(prompt_data: PromptData):
     file_refs = parse_file_references(context)
     if file_refs:
         typer.echo(f"📁 Added files: {', '.join(file_refs)}")
+    
+    if include_git:
+        typer.echo("🌿 Added git context")
     
     typer.echo(f"✅ Context updated: {context[:50]}{'...' if len(context) > 50 else ''}")
 
@@ -871,6 +911,25 @@ def interactive_menu_with_data(prompt_data: PromptData = None):
                     
             except Exception:
                 # Silently fail if project detection has issues
+                pass
+            
+            # Show git information if in a git repository
+            try:
+                if git_utils.is_git_repo():
+                    current_branch = git_utils.get_current_branch()
+                    status = git_utils.get_git_status()
+                    
+                    if current_branch:
+                        typer.echo(f"🌿 Git branch: {current_branch}")
+                    
+                    # Show git status if there are changes
+                    if any(status.values()):
+                        total_files = sum(len(files) for files in status.values())
+                        if total_files > 0:
+                            typer.echo(f"📝 Git status: {total_files} files with changes")
+                            
+            except Exception:
+                # Silently fail if git detection has issues
                 pass
             
             typer.echo("\nBuild your prompt by selecting from the options below:\n")
@@ -1176,6 +1235,260 @@ def explain_file(file_path: str):
 def test_file(file_path: str):
     """Generate test case prompt for a file."""
     quick(template="testing", file=file_path, output=False)
+
+
+@app.command("diff")
+def diff_command():
+    """Generate prompt with recent git changes."""
+    if not git_utils.is_git_repo():
+        typer.echo("❌ Not in a git repository.")
+        return
+    
+    # Get git status and diff information
+    status = git_utils.get_git_status()
+    unstaged_diff = git_utils.get_git_diff(staged=False)
+    staged_diff = git_utils.get_git_diff(staged=True)
+    current_branch = git_utils.get_current_branch()
+    recent_commits = git_utils.get_recent_commits(3)
+    
+    # Build context information
+    context_parts = []
+    
+    # Add branch information
+    if current_branch:
+        context_parts.append(f"**Current Branch:** {current_branch}")
+    
+    # Add recent commits
+    if recent_commits:
+        context_parts.append("**Recent Commits:**")
+        for commit in recent_commits:
+            context_parts.append(f"- {commit['hash']}: {commit['message']} ({commit['author']}, {commit['date']})")
+    
+    # Add git status
+    if any(status.values()):
+        context_parts.append("**Git Status:**")
+        for status_type, files in status.items():
+            if files:
+                context_parts.append(f"- {status_type.title()}: {', '.join(files[:5])}")
+                if len(files) > 5:
+                    context_parts.append(f"  ... and {len(files) - 5} more files")
+    
+    # Add diffs
+    if staged_diff:
+        context_parts.append("**Staged Changes:**")
+        context_parts.append(f"```diff\n{staged_diff}\n```")
+    
+    if unstaged_diff:
+        context_parts.append("**Unstaged Changes:**")
+        context_parts.append(f"```diff\n{unstaged_diff}\n```")
+    
+    if not context_parts:
+        typer.echo("📝 No git changes found.")
+        return
+    
+    # Load a template for git diff review
+    template_obj = template_manager.load_template("code-review")
+    if not template_obj:
+        typer.echo("❌ Code review template not found.")
+        return
+    
+    # Create prompt data
+    prompt_data = template_obj.to_prompt_data()
+    prompt_data.persona = "You are a senior software engineer reviewing git changes for code quality, potential issues, and best practices."
+    prompt_data.task = "Review the provided git changes and provide feedback on the modifications, additions, and deletions."
+    prompt_data.context = "\n\n".join(context_parts)
+    prompt_data.constraints = "Focus on: code quality, potential bugs, security implications, performance considerations, and adherence to best practices. Provide specific, actionable feedback."
+    
+    # Generate and copy prompt
+    prompt_string = generate_prompt_string(prompt_data)
+    
+    try:
+        pyperclip.copy(prompt_string)
+        typer.echo("✅ Git diff review prompt copied to clipboard!")
+        typer.echo(f"🔍 Branch: {current_branch}")
+        if any(status.values()):
+            total_files = sum(len(files) for files in status.values())
+            typer.echo(f"📁 Files changed: {total_files}")
+    except Exception as e:
+        typer.echo(f"❌ Error copying to clipboard: {e}")
+        typer.echo("📋 Generated Prompt:")
+        typer.echo("-" * 50)
+        typer.echo(prompt_string)
+        typer.echo("-" * 50)
+
+
+@app.command("commit")
+def commit_command():
+    """Generate commit message from staged changes."""
+    if not git_utils.is_git_repo():
+        typer.echo("❌ Not in a git repository.")
+        return
+    
+    # Get staged changes
+    staged_diff = git_utils.get_git_diff(staged=True)
+    status = git_utils.get_git_status()
+    current_branch = git_utils.get_current_branch()
+    
+    if not staged_diff and not status.get("added") and not status.get("deleted"):
+        typer.echo("❌ No staged changes found. Stage your changes first with 'git add'.")
+        return
+    
+    # Build context for commit message generation
+    context_parts = []
+    
+    if current_branch:
+        context_parts.append(f"**Branch:** {current_branch}")
+    
+    # Add staged file summary
+    if any([status.get("added"), status.get("modified"), status.get("deleted")]):
+        context_parts.append("**Staged Changes:**")
+        if status.get("added"):
+            context_parts.append(f"- Added: {', '.join(status['added'])}")
+        if status.get("modified"):
+            context_parts.append(f"- Modified: {', '.join(status['modified'])}")
+        if status.get("deleted"):
+            context_parts.append(f"- Deleted: {', '.join(status['deleted'])}")
+    
+    # Add the actual diff
+    if staged_diff:
+        context_parts.append("**Staged Diff:**")
+        context_parts.append(f"```diff\n{staged_diff}\n```")
+    
+    # Create prompt for commit message generation
+    prompt_data = PromptData()
+    prompt_data.persona = "You are an expert developer who writes clear, conventional commit messages following best practices."
+    prompt_data.task = "Generate a concise, descriptive commit message for the staged changes. Follow conventional commit format when appropriate (feat:, fix:, docs:, etc.)."
+    prompt_data.context = "\n\n".join(context_parts)
+    prompt_data.constraints = "- Keep the subject line under 50 characters\n- Use imperative mood (\"Add\" not \"Added\")\n- Be specific about what changed\n- Include type prefix if appropriate (feat:, fix:, docs:, refactor:, etc.)\n- If multiple unrelated changes, suggest splitting into separate commits"
+    
+    # Generate and copy prompt
+    prompt_string = generate_prompt_string(prompt_data)
+    
+    try:
+        pyperclip.copy(prompt_string)
+        typer.echo("✅ Commit message prompt copied to clipboard!")
+        typer.echo(f"🔍 Branch: {current_branch}")
+        staged_files = len([f for files in [status.get("added", []), status.get("modified", []), status.get("deleted", [])] for f in files])
+        typer.echo(f"📁 Staged files: {staged_files}")
+    except Exception as e:
+        typer.echo(f"❌ Error copying to clipboard: {e}")
+        typer.echo("📋 Generated Prompt:")
+        typer.echo("-" * 50)
+        typer.echo(prompt_string)
+        typer.echo("-" * 50)
+
+
+@app.command("pr")
+def pr_command():
+    """Generate PR description from branch changes."""
+    if not git_utils.is_git_repo():
+        typer.echo("❌ Not in a git repository.")
+        return
+    
+    current_branch = git_utils.get_current_branch()
+    
+    if not current_branch:
+        typer.echo("❌ Could not determine current branch.")
+        return
+    
+    if current_branch in ["main", "master", "develop"]:
+        typer.echo(f"❌ You're on '{current_branch}' branch. Switch to a feature branch first.")
+        return
+    
+    # Get branch diff (assuming comparison with main/master)
+    base_branches = ["main", "master", "develop"]
+    base_branch = None
+    
+    for branch in base_branches:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--verify", f"origin/{branch}"],
+                capture_output=True,
+                cwd="."
+            )
+            if result.returncode == 0:
+                base_branch = branch
+                break
+        except:
+            continue
+    
+    if not base_branch:
+        base_branch = "main"  # Default fallback
+    
+    # Get diff from base branch
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "diff", f"{base_branch}...HEAD"],
+            capture_output=True,
+            text=True,
+            cwd="."
+        )
+        branch_diff = result.stdout if result.returncode == 0 else ""
+    except:
+        branch_diff = ""
+    
+    # Get commit history for this branch
+    try:
+        result = subprocess.run([
+            "git", "log", 
+            f"{base_branch}..HEAD",
+            "--pretty=format:%s",
+            "--no-merges"
+        ], capture_output=True, text=True, cwd=".")
+        
+        branch_commits = result.stdout.strip().split('\n') if result.returncode == 0 and result.stdout.strip() else []
+    except:
+        branch_commits = []
+    
+    # Build context for PR description
+    context_parts = []
+    
+    context_parts.append(f"**Feature Branch:** {current_branch}")
+    context_parts.append(f"**Base Branch:** {base_branch}")
+    
+    if branch_commits:
+        context_parts.append("**Commits in this branch:**")
+        for commit in branch_commits[:10]:  # Limit to 10 commits
+            context_parts.append(f"- {commit}")
+        if len(branch_commits) > 10:
+            context_parts.append(f"... and {len(branch_commits) - 10} more commits")
+    
+    if branch_diff:
+        context_parts.append("**Changes in this branch:**")
+        context_parts.append(f"```diff\n{branch_diff}\n```")
+    
+    if not branch_commits and not branch_diff:
+        typer.echo("❌ No changes found between current branch and base branch.")
+        return
+    
+    # Create prompt for PR description
+    prompt_data = PromptData()
+    prompt_data.persona = "You are an experienced developer who writes excellent pull request descriptions that help reviewers understand the changes."
+    prompt_data.task = "Generate a comprehensive pull request description based on the branch changes and commits."
+    prompt_data.context = "\n\n".join(context_parts)
+    prompt_data.constraints = """Structure the PR description with:
+- **Summary**: Brief overview of what this PR does
+- **Changes**: Key modifications, additions, or fixes
+- **Testing**: How the changes were tested (if applicable)
+- **Screenshots/Notes**: Any visual changes or important notes for reviewers
+
+Be clear, concise, and focus on the business value and technical impact."""
+    
+    # Generate and copy prompt
+    prompt_string = generate_prompt_string(prompt_data)
+    
+    try:
+        pyperclip.copy(prompt_string)
+        typer.echo("✅ PR description prompt copied to clipboard!")
+        typer.echo(f"🔍 Branch: {current_branch} → {base_branch}")
+        typer.echo(f"📝 Commits: {len(branch_commits)}")
+    except Exception as e:
+        typer.echo(f"❌ Error copying to clipboard: {e}")
+        typer.echo("📋 Generated Prompt:")
+        typer.echo("-" * 50)
+        typer.echo(prompt_string)
+        typer.echo("-" * 50)
 
 
 @app.callback(invoke_without_command=True)
