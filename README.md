@@ -32,6 +32,13 @@ PromptCraft helps engineers move from simple "prompting" to detailed "specifying
 - **Session Management**: Save, load, and reuse complex prompts
 - **Direct LLM Execution**: Run prompts against OpenAI API with rich formatting
 
+### 🌿 **Git Integration** (NEW!)
+- **Git Workflow Commands**: `diff`, `commit`, `pr` for seamless git integration
+- **Smart Context**: Automatically include git status, branch info, and recent commits
+- **Code Review Automation**: Generate review prompts from git changes
+- **Commit Message Generation**: Create conventional commit messages from staged changes
+- **PR Description Generation**: Build comprehensive PR descriptions from branch diffs
+
 ## Installation
 
 This project is managed with Poetry.
@@ -148,6 +155,25 @@ poetry run promptcraft quick --template=feature-planning --file=requirements.md
 poetry run promptcraft quick --template=testing --file=utils.py --output
 ```
 
+### **🌿 Git Workflow** (NEW!)
+```bash
+# Review current changes before committing
+poetry run promptcraft diff
+# → Generates intelligent code review prompt with git context
+# → Includes branch info, recent commits, staged/unstaged changes
+
+# Generate commit messages from staged changes
+git add .
+poetry run promptcraft commit
+# → Creates conventional commit message prompts
+# → Analyzes staged files and changes for context
+
+# Create PR descriptions from branch changes
+poetry run promptcraft pr
+# → Generates comprehensive PR descriptions
+# → Compares feature branch to main with commit history
+```
+
 ## 📖 Command Reference
 
 ### **🚀 Quick Commands** (Most Used)
@@ -195,6 +221,14 @@ promptcraft quick --template=refactoring --file=legacy.js --output
 | `load <name>` | Load and edit a session |
 | `run <name>` | Execute session with LLM |
 
+### **🌿 Git Integration** (NEW!)
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `diff` | Review git changes | `promptcraft diff` |
+| `commit` | Generate commit messages | `promptcraft commit` |
+| `pr` | Generate PR descriptions | `promptcraft pr` |
+
 ### **🧠 Smart Context Features**
 
 PromptCraft automatically detects and extracts:
@@ -222,11 +256,17 @@ PromptCraft automatically detects and extracts:
 alias pcr="poetry run promptcraft review"
 alias pcd="poetry run promptcraft debug" 
 alias pce="poetry run promptcraft explain"
+alias pcg="poetry run promptcraft diff"      # Git workflow
+alias pcc="poetry run promptcraft commit"    # Commit messages
+alias pcp="poetry run promptcraft pr"        # PR descriptions
 
 # Now just use:
 pcr main.py        # Instant code review
 pcd "syntax error" # Quick debugging
 pce complex.js     # Code explanation
+pcg                # Git diff review
+pcc                # Commit message generation
+pcp                # PR description
 ```
 
 ### **Integration with LLMs**
@@ -237,6 +277,27 @@ pce complex.js     # Code explanation
    - Gemini
    - Local LLMs
 3. Get intelligent, context-aware responses!
+
+### **🌿 Git Workflow Best Practices**
+```bash
+# Daily development workflow with PromptCraft
+git checkout -b feature/new-feature
+
+# 1. Review changes before committing
+promptcraft diff
+# → Paste into LLM for code review feedback
+
+# 2. Make improvements based on feedback, then commit
+git add .
+promptcraft commit
+# → Paste into LLM to get optimized commit message
+# → Copy the generated message and use: git commit -m "message"
+
+# 3. Create PR when ready
+promptcraft pr  
+# → Paste into LLM to get comprehensive PR description
+# → Use for GitHub/GitLab PR creation
+```
 
 ### **Project-Specific Templates**
 ```bash
