@@ -70,63 +70,105 @@ def init():
 
 
 @app.command("list")
-def list_sessions():
-    """List all saved prompt sessions."""
-    promptcraft_dir = ".promptcraft"
+def list_sessions(
+    limit: int = typer.Option(10, "--limit", "-l", help="Number of sessions to show"),
+    show_favorites: bool = typer.Option(False, "--favorites", "-f", help="Show only favorites")
+):
+    """List all saved prompt sessions with enhanced metadata."""
+    from .session_manager import EnhancedSessionManager, SessionSearchFilter
     
-    if not os.path.exists(promptcraft_dir):
-        typer.echo("📁 No saved sessions found. Use 'promptcraft' to create and save sessions.")
-        return
-    
-    # Find all .json files in the directory
-    json_files = []
-    for filename in os.listdir(promptcraft_dir):
-        if filename.endswith('.json'):
-            session_name = filename[:-5]  # Remove .json extension
-            json_files.append(session_name)
-    
-    if not json_files:
-        typer.echo("📁 No saved sessions found. Use 'promptcraft' to create and save sessions.")
-        return
-    
-    typer.echo("📋 Saved Sessions:")
-    for session_name in sorted(json_files):
-        typer.echo(f"  • {session_name}")
+    try:
+        session_manager = EnhancedSessionManager()
+        
+        # Get sessions based on filters
+        if show_favorites:
+            sessions = session_manager.get_favorites()
+        else:
+            search_filter = SessionSearchFilter(limit=limit)
+            sessions = session_manager.search_sessions(search_filter)
+        
+        if not sessions:
+            if show_favorites:
+                typer.echo("⭐ No favorite sessions found.")
+                typer.echo("💡 Use 'promptcraft favorite <session_name>' to mark sessions as favorites.")
+            else:
+                typer.echo("📁 No saved sessions found.")
+                typer.echo("💡 Use 'promptcraft' to create and save sessions.")
+            return
+        
+        # Display sessions
+        title = "⭐ Favorite Sessions:" if show_favorites else "📋 Saved Sessions:"
+        typer.echo(f"{title} ({len(sessions)} found)")
+        typer.echo("-" * 60)
+        
+        for i, session in enumerate(sessions, 1):
+            # Format session info
+            favorite_star = "⭐" if session.favorite else "  "
+            rating_str = f"({session.success_rating}/5)" if session.success_rating else ""
+            
+            typer.echo(f"{i:2d}. {favorite_star} {session.name} {rating_str}")
+            typer.echo(f"     Last used: {session.last_used.strftime('%Y-%m-%d %H:%M')}")
+            
+            if session.tags:
+                tag_str = ", ".join(session.tags[:3])  # Show first 3 tags
+                if len(session.tags) > 3:
+                    tag_str += f" (+{len(session.tags) - 3} more)"
+                typer.echo(f"     Tags: {tag_str}")
+            
+            if session.description:
+                desc = session.description[:50] + "..." if len(session.description) > 50 else session.description
+                typer.echo(f"     Description: {desc}")
+            
+            typer.echo()
+        
+        # Show usage tips
+        typer.echo("💡 Commands:")
+        typer.echo("   promptcraft load <session_name> - Load a session")
+        typer.echo("   promptcraft history - View detailed session history")
+        typer.echo("   promptcraft favorites - Show only favorite sessions")
+        
+    except Exception as e:
+        typer.echo(f"❌ Error listing sessions: {e}")
 
 
 @app.command("load")
 def load_session(session_name: str):
     """Load a saved prompt session and start the interactive menu."""
-    promptcraft_dir = ".promptcraft"
-    filepath = os.path.join(promptcraft_dir, f"{session_name}.json")
+    from .session_manager import EnhancedSessionManager
     
-    if not os.path.exists(filepath):
-        typer.echo(f"❌ Session '{session_name}' not found.")
-        typer.echo("💡 Use 'promptcraft list' to see available sessions.")
-        return
-    
-    # Load the session data
     try:
-        with open(filepath, "r") as f:
-            session_data = json.load(f)
+        session_manager = EnhancedSessionManager()
         
-        # Create PromptData object from loaded data
-        prompt_data = PromptData(
-            persona=session_data.get("persona"),
-            task=session_data.get("task"),
-            context=session_data.get("context"),
-            schemas=session_data.get("schemas", []),
-            examples=session_data.get("examples", []),
-            constraints=session_data.get("constraints")
-        )
+        # Find session by name
+        session = session_manager.get_session_by_name(session_name)
         
-        typer.echo(f"✅ Loaded session '{session_name}'")
+        if not session:
+            typer.echo(f"❌ Session '{session_name}' not found.")
+            typer.echo("💡 Use 'promptcraft list' to see available sessions.")
+            return
+        
+        # Display session info
+        typer.echo(f"✅ Loading session: {session.name}")
+        if session.favorite:
+            typer.echo("   ⭐ Favorite session")
+        if session.success_rating:
+            typer.echo(f"   Rating: {session.success_rating}/5")
+        if session.tags:
+            typer.echo(f"   Tags: {', '.join(session.tags)}")
+        if session.description:
+            typer.echo(f"   Description: {session.description}")
+        typer.echo(f"   Last used: {session.last_used.strftime('%Y-%m-%d %H:%M')}")
+        typer.echo()
+        
+        # Update last used time
+        session_manager.update_session(session)
         
         # Start interactive menu with loaded data
-        interactive_menu_with_data(prompt_data)
-        
-    except json.JSONDecodeError:
-        typer.echo(f"❌ Error: Invalid JSON in session file '{session_name}'")
+        if session.data:
+            interactive_menu_with_data(session.data, session.id)
+        else:
+            typer.echo("❌ Session data is corrupted or missing.")
+            
     except Exception as e:
         typer.echo(f"❌ Error loading session '{session_name}': {e}")
 
@@ -744,7 +786,9 @@ def generate_prompt_string(data: PromptData) -> str:
 
 
 def handle_save_session(prompt_data: PromptData):
-    """Handle saving the current session to a file."""
+    """Handle saving the current session with enhanced metadata."""
+    from .session_manager import EnhancedSessionManager
+    
     typer.echo("\n💾 Save Session")
     
     # Check if there's data to save
@@ -753,40 +797,73 @@ def handle_save_session(prompt_data: PromptData):
         typer.echo("❌ No data to save. Please fill out at least one section.")
         return
     
-    # Get filename from user
-    filename = inquirer.text(
-        message="Enter session name (without extension):",
+    # Get session name from user
+    session_name = inquirer.text(
+        message="Enter session name:",
         default=""
     ).execute()
     
-    if not filename.strip():
+    if not session_name.strip():
         typer.echo("❌ Session name cannot be empty.")
         return
     
-    # Clean the filename
-    filename = filename.strip().replace(" ", "_")
+    session_name = session_name.strip()
     
-    # Create .promptcraft directory if it doesn't exist
-    promptcraft_dir = ".promptcraft"
-    if not os.path.exists(promptcraft_dir):
-        os.makedirs(promptcraft_dir)
+    # Get optional description
+    description = inquirer.text(
+        message="Enter session description (optional):",
+        default=""
+    ).execute()
     
-    # Prepare data for JSON serialization
-    session_data = {
-        "persona": prompt_data.persona,
-        "task": prompt_data.task,
-        "context": prompt_data.context,
-        "schemas": prompt_data.schemas,
-        "examples": prompt_data.examples,
-        "constraints": prompt_data.constraints
-    }
+    # Get tags
+    tags_input = inquirer.text(
+        message="Enter tags (comma-separated, optional):",
+        default=""
+    ).execute()
     
-    # Save to JSON file
-    filepath = os.path.join(promptcraft_dir, f"{filename}.json")
+    tags = []
+    if tags_input.strip():
+        tags = [tag.strip() for tag in tags_input.split(",") if tag.strip()]
+    
+    # Save using enhanced session manager
     try:
-        with open(filepath, "w") as f:
-            json.dump(session_data, f, indent=2)
-        typer.echo(f"✅ Session saved as '{filename}' in {filepath}")
+        session_manager = EnhancedSessionManager()
+        
+        # Check if session with this name already exists
+        existing_session = session_manager.get_session_by_name(session_name)
+        if existing_session:
+            overwrite = inquirer.confirm(
+                message=f"Session '{session_name}' already exists. Overwrite?",
+                default=False
+            ).execute()
+            
+            if overwrite:
+                # Update existing session
+                existing_session.data = prompt_data
+                if description.strip():
+                    existing_session.description = description.strip()
+                if tags:
+                    existing_session.tags = tags
+                session_manager.update_session(existing_session)
+                typer.echo(f"✅ Updated session '{session_name}'")
+            else:
+                typer.echo("❌ Session save cancelled.")
+                return
+        else:
+            # Create new session
+            session = session_manager.create_session(
+                name=session_name,
+                data=prompt_data,
+                tags=tags,
+                description=description.strip() if description.strip() else None
+            )
+            typer.echo(f"✅ Session saved as '{session_name}'")
+            typer.echo(f"   ID: {session.id}")
+            if tags:
+                typer.echo(f"   Tags: {', '.join(tags)}")
+            if description.strip():
+                typer.echo(f"   Description: {description.strip()}")
+    
     except Exception as e:
         typer.echo(f"❌ Error saving session: {e}")
 
@@ -839,6 +916,8 @@ def get_menu_options(prompt_data: PromptData):
         ("📐 Define Schemas", "schemas"),
         ("💡 Add Examples", "examples"),
         ("⚠️  Set Constraints", "constraints"),
+        ("⭐ Rate This Session", None),
+        ("❤️  Toggle Favorite", None),
         ("💾 Save Session As...", None),
         ("✨ Generate and Copy Prompt ✨", None),
         ("🚪 Exit", None),
@@ -883,7 +962,66 @@ def get_next_step_index(current_choice, base_options):
     
     return current_index  # Stay on current if no next step
 
-def interactive_menu_with_data(prompt_data: PromptData = None):
+
+def handle_rate_session(prompt_data: PromptData, session_id: str = None):
+    """Handle session rating."""
+    if session_id is None:
+        typer.echo("⚠️  Cannot rate session - no session ID available.")
+        typer.echo("💡 Save the session first to enable rating.")
+        return
+    
+    from .session_manager import EnhancedSessionManager
+    
+    typer.echo("\n⭐ Rate This Session")
+    typer.echo("Rate how successful this session was (1-5 scale)")
+    
+    rating = inquirer.select(
+        message="Select rating:",
+        choices=[
+            "1 - Not helpful at all",
+            "2 - Slightly helpful", 
+            "3 - Moderately helpful",
+            "4 - Very helpful",
+            "5 - Extremely helpful"
+        ]
+    ).execute()
+    
+    if rating:
+        rating_value = int(rating.split(' - ')[0])
+        try:
+            session_manager = EnhancedSessionManager()
+            if session_manager.rate_session(session_id, rating_value):
+                typer.echo(f"✅ Session rated: {rating_value}/5")
+            else:
+                typer.echo("❌ Failed to rate session.")
+        except Exception as e:
+            typer.echo(f"❌ Error rating session: {e}")
+
+
+def handle_toggle_favorite(prompt_data: PromptData, session_id: str = None):
+    """Handle toggling session favorite status."""
+    if session_id is None:
+        typer.echo("⚠️  Cannot toggle favorite - no session ID available.")
+        typer.echo("💡 Save the session first to enable favorites.")
+        return
+    
+    from .session_manager import EnhancedSessionManager
+    
+    try:
+        session_manager = EnhancedSessionManager()
+        if session_manager.toggle_favorite(session_id):
+            session = session_manager.get_session(session_id)
+            if session and session.favorite:
+                typer.echo("⭐ Session marked as favorite!")
+            else:
+                typer.echo("✅ Session removed from favorites.")
+        else:
+            typer.echo("❌ Failed to toggle favorite status.")
+    except Exception as e:
+        typer.echo(f"❌ Error toggling favorite: {e}")
+
+
+def interactive_menu_with_data(prompt_data: PromptData = None, session_id: str = None):
     """Run the main interactive menu for building prompts."""
     if prompt_data is None:
         prompt_data = PromptData()
@@ -974,6 +1112,12 @@ def interactive_menu_with_data(prompt_data: PromptData = None):
         elif choice.endswith("Set Constraints") or choice == "⚠️  Set Constraints":
             handle_constraints(prompt_data)
             current_step_index = get_next_step_index(choice, base_options)
+        elif choice.endswith("Rate This Session") or choice == "⭐ Rate This Session":
+            handle_rate_session(prompt_data, session_id)
+            # Stay on current step for rating
+        elif choice.endswith("Toggle Favorite") or choice == "❤️  Toggle Favorite":
+            handle_toggle_favorite(prompt_data, session_id)
+            # Stay on current step for favorite toggle
         elif choice.endswith("Save Session As...") or choice == "💾 Save Session As...":
             handle_save_session(prompt_data)
             # Stay on current step for save
@@ -1588,7 +1732,7 @@ def last_command():
         
         # Launch interactive menu with the session data
         if last_session.data:
-            interactive_menu_with_data(last_session.data)
+            interactive_menu_with_data(last_session.data, last_session.id)
         else:
             typer.echo("❌ Session data is corrupted or missing.")
             
