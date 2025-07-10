@@ -1491,6 +1491,278 @@ Be clear, concise, and focus on the business value and technical impact."""
         typer.echo("-" * 50)
 
 
+@app.command("history")
+def history_command(
+    limit: int = typer.Option(10, "--limit", "-l", help="Number of sessions to show"),
+    query: str = typer.Option(None, "--query", "-q", help="Search query"),
+    tags: List[str] = typer.Option(None, "--tag", "-t", help="Filter by tags"),
+    favorite: bool = typer.Option(False, "--favorites", "-f", help="Show only favorites"),
+    export: bool = typer.Option(False, "--export", "-e", help="Export sessions to JSON")
+):
+    """Show session history with optional filtering and search."""
+    from .session_manager import EnhancedSessionManager, SessionSearchFilter
+    
+    try:
+        session_manager = EnhancedSessionManager()
+        
+        # Build search filter
+        search_filter = SessionSearchFilter(
+            query=query,
+            tags=tags if tags else None,
+            favorite=favorite if favorite else None,
+            limit=limit
+        )
+        
+        # Get sessions
+        sessions = session_manager.search_sessions(search_filter)
+        
+        if not sessions:
+            typer.echo("❌ No sessions found matching your criteria.")
+            return
+        
+        # Export if requested
+        if export:
+            export_path = session_manager.export_sessions(
+                session_ids=[s.id for s in sessions]
+            )
+            typer.echo(f"✅ Exported {len(sessions)} sessions to {export_path}")
+            return
+        
+        # Display sessions
+        typer.echo(f"📊 Found {len(sessions)} session(s)")
+        typer.echo("-" * 80)
+        
+        for i, session in enumerate(sessions, 1):
+            # Format session info
+            favorite_star = "⭐" if session.favorite else "  "
+            rating_str = f"({session.success_rating}/5)" if session.success_rating else "(unrated)"
+            
+            typer.echo(f"{i:2d}. {favorite_star} {session.name}")
+            typer.echo(f"     ID: {session.id}")
+            typer.echo(f"     Created: {session.created_at.strftime('%Y-%m-%d %H:%M')}")
+            typer.echo(f"     Last Used: {session.last_used.strftime('%Y-%m-%d %H:%M')}")
+            typer.echo(f"     Status: {session.status.value} | Rating: {rating_str}")
+            
+            if session.tags:
+                tag_str = ", ".join(session.tags)
+                typer.echo(f"     Tags: {tag_str}")
+            
+            if session.description:
+                typer.echo(f"     Description: {session.description}")
+            
+            typer.echo()
+        
+        # Show commands help
+        typer.echo("💡 Use 'promptcraft load <session_name>' to load a session")
+        typer.echo("💡 Use 'promptcraft favorite <session_name>' to toggle favorites")
+        typer.echo("💡 Use 'promptcraft history --favorites' to show only favorites")
+        
+    except Exception as e:
+        typer.echo(f"❌ Error accessing session history: {str(e)}")
+
+
+@app.command("last")
+def last_command():
+    """Load and run the most recently used session."""
+    from .session_manager import EnhancedSessionManager
+    
+    try:
+        session_manager = EnhancedSessionManager()
+        
+        # Get most recent session
+        sessions = session_manager.get_all_sessions()
+        
+        if not sessions:
+            typer.echo("❌ No sessions found.")
+            typer.echo("💡 Create a session first using the interactive menu.")
+            return
+        
+        last_session = sessions[0]  # Sessions are sorted by last_used desc
+        
+        typer.echo(f"🔄 Loading last session: {last_session.name}")
+        typer.echo(f"   Created: {last_session.created_at.strftime('%Y-%m-%d %H:%M')}")
+        typer.echo(f"   Last Used: {last_session.last_used.strftime('%Y-%m-%d %H:%M')}")
+        
+        # Update last used time
+        session_manager.update_session(last_session)
+        
+        # Launch interactive menu with the session data
+        if last_session.data:
+            interactive_menu_with_data(last_session.data)
+        else:
+            typer.echo("❌ Session data is corrupted or missing.")
+            
+    except Exception as e:
+        typer.echo(f"❌ Error loading last session: {str(e)}")
+
+
+@app.command("favorite")
+def favorite_command(session_name: str):
+    """Toggle favorite status of a session."""
+    from .session_manager import EnhancedSessionManager
+    
+    try:
+        session_manager = EnhancedSessionManager()
+        
+        # Find session by name
+        session = session_manager.get_session_by_name(session_name)
+        
+        if not session:
+            typer.echo(f"❌ Session '{session_name}' not found.")
+            typer.echo("💡 Use 'promptcraft history' to see available sessions.")
+            return
+        
+        # Toggle favorite
+        success = session_manager.toggle_favorite(session.id)
+        
+        if success:
+            updated_session = session_manager.get_session(session.id)
+            if updated_session.favorite:
+                typer.echo(f"⭐ Added '{session_name}' to favorites!")
+            else:
+                typer.echo(f"✅ Removed '{session_name}' from favorites.")
+        else:
+            typer.echo(f"❌ Failed to update favorite status for '{session_name}'.")
+            
+    except Exception as e:
+        typer.echo(f"❌ Error updating favorite status: {str(e)}")
+
+
+@app.command("favorites")
+def favorites_command():
+    """Show all favorite sessions."""
+    from .session_manager import EnhancedSessionManager
+    
+    try:
+        session_manager = EnhancedSessionManager()
+        
+        # Get favorite sessions
+        favorites = session_manager.get_favorites()
+        
+        if not favorites:
+            typer.echo("❌ No favorite sessions found.")
+            typer.echo("💡 Use 'promptcraft favorite <session_name>' to add favorites.")
+            return
+        
+        # Display favorites
+        typer.echo(f"⭐ {len(favorites)} Favorite Session(s)")
+        typer.echo("-" * 60)
+        
+        for i, session in enumerate(favorites, 1):
+            rating_str = f"({session.success_rating}/5)" if session.success_rating else "(unrated)"
+            
+            typer.echo(f"{i:2d}. {session.name}")
+            typer.echo(f"     Created: {session.created_at.strftime('%Y-%m-%d %H:%M')}")
+            typer.echo(f"     Rating: {rating_str} | Status: {session.status.value}")
+            
+            if session.tags:
+                tag_str = ", ".join(session.tags)
+                typer.echo(f"     Tags: {tag_str}")
+            
+            if session.description:
+                typer.echo(f"     Description: {session.description}")
+            
+            typer.echo()
+        
+        typer.echo("💡 Use 'promptcraft load <session_name>' to load a favorite session")
+        
+    except Exception as e:
+        typer.echo(f"❌ Error accessing favorites: {str(e)}")
+
+
+@app.command("delete")
+def delete_command(
+    session_name: str,
+    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt")
+):
+    """Delete a session permanently."""
+    from .session_manager import EnhancedSessionManager
+    
+    try:
+        session_manager = EnhancedSessionManager()
+        
+        # Find session by name
+        session = session_manager.get_session_by_name(session_name)
+        
+        if not session:
+            typer.echo(f"❌ Session '{session_name}' not found.")
+            typer.echo("💡 Use 'promptcraft history' to see available sessions.")
+            return
+        
+        # Confirm deletion
+        if not confirm:
+            typer.echo(f"🗑️  Are you sure you want to delete '{session_name}'?")
+            typer.echo(f"   Created: {session.created_at.strftime('%Y-%m-%d %H:%M')}")
+            typer.echo(f"   Tags: {', '.join(session.tags) if session.tags else 'None'}")
+            typer.echo(f"   Favorite: {'Yes' if session.favorite else 'No'}")
+            
+            confirm = typer.confirm("Delete this session?")
+            
+        if confirm:
+            success = session_manager.delete_session(session.id)
+            
+            if success:
+                typer.echo(f"✅ Deleted session '{session_name}'.")
+            else:
+                typer.echo(f"❌ Failed to delete session '{session_name}'.")
+        else:
+            typer.echo("❌ Deletion cancelled.")
+            
+    except Exception as e:
+        typer.echo(f"❌ Error deleting session: {str(e)}")
+
+
+@app.command("stats")
+def stats_command():
+    """Show session statistics and analytics."""
+    from .session_manager import EnhancedSessionManager
+    
+    try:
+        session_manager = EnhancedSessionManager()
+        
+        # Get statistics
+        stats = session_manager.get_session_stats()
+        
+        typer.echo("📊 Session Statistics")
+        typer.echo("=" * 50)
+        
+        # Basic stats
+        typer.echo(f"Total Sessions: {stats['total_sessions']}")
+        typer.echo(f"Favorite Sessions: {stats['favorite_sessions']}")
+        typer.echo(f"Sessions This Week: {stats['sessions_this_week']}")
+        typer.echo(f"Sessions This Month: {stats['sessions_this_month']}")
+        typer.echo()
+        
+        # Sessions by status
+        if stats['sessions_by_status']:
+            typer.echo("Sessions by Status:")
+            for status, count in stats['sessions_by_status'].items():
+                typer.echo(f"  {status}: {count}")
+            typer.echo()
+        
+        # Sessions by rating
+        if stats['sessions_by_rating']:
+            typer.echo("Sessions by Rating:")
+            for rating, count in stats['sessions_by_rating'].items():
+                typer.echo(f"  {rating}/5: {count}")
+            typer.echo()
+        
+        # Most used tags
+        if stats['most_used_tags']:
+            typer.echo("Most Used Tags:")
+            sorted_tags = sorted(stats['most_used_tags'].items(), 
+                               key=lambda x: x[1], reverse=True)
+            for tag, count in sorted_tags[:10]:  # Show top 10
+                typer.echo(f"  {tag}: {count}")
+            typer.echo()
+        
+        typer.echo("💡 Use 'promptcraft history' to browse sessions")
+        typer.echo("💡 Use 'promptcraft favorites' to see your starred sessions")
+        
+    except Exception as e:
+        typer.echo(f"❌ Error getting session statistics: {str(e)}")
+
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """PromptCraft - A CLI for crafting high-quality LLM prompts."""
